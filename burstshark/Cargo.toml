@@ -1,0 +1,9 @@
+[package]
+name = "burstshark"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { version = "4.2.0", features = ["derive"] }
+nix = { version = "0.26.2", features = ["signal"] }
+tokio = { version = "1.37.0", features = ["io-util", "macros", "process", "rt-multi-thread", "signal", "sync", "time"] }
