@@ -22,7 +22,7 @@ class Model(Enum):
     WEAK = "weak"
     UNKNOWN = "unknown"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.value
 
 
@@ -30,7 +30,7 @@ class Method(Enum):
     NETWORK = "network"
     WIFI = "wifi"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.value
 
 
@@ -38,7 +38,7 @@ class Setting(NamedTuple):
     models: list[Model]
     methods: list[Method]
     recompute: bool
-    theta: float
+    thetas: list[float]
     time: int
     burstshark_path: Path
 
@@ -60,6 +60,13 @@ def main() -> None:
         type=float,
         default=2.2,
         help="Confidence threshold (θ) for selecting candidates (default: 2.2)",
+    )
+    parser.add_argument(
+        "--all-theta",
+        action=argparse.BooleanOptionalAction,
+        type=bool,
+        default=False,
+        help="Run θ values from 1.0 to 5.0 (inclusive) with a 0.05 step size",
     )
     parser.add_argument(
         "--time",
@@ -89,6 +96,9 @@ def main() -> None:
         parser.error("Model 'strong' and method 'wifi' are incompatible")
 
     if args.recompute:
+        if args.all_theta:
+            parser.error("--recompute and --all-theta are incompatible (run --recompute first)")
+
         try:
             completed = subprocess.run(
                 ["tshark", "--version"], capture_output=True, text=True, check=True
@@ -107,7 +117,18 @@ def main() -> None:
 
     models = [args.model] if args.model is not None else list(Model)
     methods = [args.method] if args.method is not None else list(Method)
-    setting = Setting(models, methods, args.recompute, args.theta, args.time, args.burstshark_path.resolve())
+    thetas = [args.theta]
+    if args.all_theta:
+        thetas = [float(f"{x:.2f}") for x in np.arange(1.0, 5.05, 0.05)]
+
+    setting = Setting(
+        models,
+        methods,
+        args.recompute,
+        thetas,
+        args.time,
+        args.burstshark_path.resolve(),
+    )
 
     run(setting)
 
@@ -158,7 +179,8 @@ def run(setting: Setting) -> None:
                 if model == Model.STRONG and method == Method.WIFI:
                     continue
 
-                run_main(df_videos, df_representations, kdp, kdt, model, method, setting)
+                for theta in setting.thetas:
+                    run_main(df_videos, df_representations, kdp, kdt, model, method, theta, setting)
         else:
             run_unknown(kdp, kdt, setting)
 
@@ -170,9 +192,10 @@ def run_main(
     kdt: dict[str, KDCandidatePredictor],
     model: Model,
     method: Method,
+    theta: float,
     setting: Setting,
 ) -> None:
-    print(f"Evaluating model '{model}' with method '{method}'...", end="", flush=True)
+    print(f"Evaluating model '{model}' with method '{method}' and θ={theta}...", end="", flush=True)
 
     testing_set = load_testing_set()
     if model == Model.STRONG:
@@ -251,7 +274,7 @@ def run_main(
             distances = np.load(f"./precomputed/kd/{identifier}-distances.npy")
 
         cst = CandidateScoreTransformer()
-        cs = CandidateSelector(setting.theta)
+        cs = CandidateSelector(theta)
         out = cs.predict(cst.transform([(i_and_ell, distances)]))[0]
 
         # cs gives us representation indices, we need to convert them to video indices
@@ -294,9 +317,9 @@ def run_main(
 
             row_idx += 1
 
-    print(f"\rEvaluating model '{model}' with method '{method}'... DONE", flush=True)
+    print(f"\rEvaluating model '{model}' with method '{method}' and θ={theta}... DONE", flush=True)
 
-    result_name = f"{model}-{method}-{setting.theta}-{setting.time}"
+    result_name = f"{model}-{method}-{theta}-{setting.time}"
 
     df_results.to_csv(f"./results/{result_name}.csv", index=False)
     print(f"Saved ./results/{result_name}.csv")
